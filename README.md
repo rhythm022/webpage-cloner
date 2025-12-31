@@ -49,7 +49,7 @@ npm run build
   "mcpServers": {
     "webpage-cloner": {
       "command": "node",
-      "args": ["D:\\_jiangjj\\2026\\first-mcp\\build\\webpage-cloner-spa.js"]
+      "args": ["C:\\path\\to\\first-mcp\\build\\webpage-cloner-spa.js"]
     }
   }
 }

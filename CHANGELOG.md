@@ -105,7 +105,7 @@
 #### 用户数据目录方式
 ```
 请克隆 https://example.com/dashboard，使用用户数据目录：
-C:\Users\xxx\AppData\Local\Google\Chrome\User Data
+C:\Users\YourUsername\AppData\Local\Google\Chrome\User Data
 ```
 
 #### 手动登录方式

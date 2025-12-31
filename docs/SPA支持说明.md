@@ -129,7 +129,7 @@
 
 **解决方案**：
 ```bash
-cd D:\_jiangjj\2026\first-mcp
+cd /path/to/first-mcp
 npm install
 npm run build
 ```
