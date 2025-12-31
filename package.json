@@ -1,0 +1,41 @@
+{
+  "name": "webpage-cloner-spa",
+  "version": "2.0.0",
+  "description": "SPA 网页克隆工具 - 基于 MCP 的浏览器自动化工具，支持 React/Vue/Angular 等 SPA 框架",
+  "type": "module",
+  "main": "build/webpage-cloner-spa.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node build/webpage-cloner-spa.js",
+    "dev": "tsc && node build/webpage-cloner-spa.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "webpage-cloner",
+    "spa",
+    "puppeteer",
+    "web-scraping"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "puppeteer": "^24.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
+
+
+
+
+
+
+
+
+
+
