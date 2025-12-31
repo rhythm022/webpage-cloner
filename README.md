@@ -88,6 +88,9 @@ npm run build
 - `downloadImages` (可选): 是否下载图片到本地（默认 true）
 - `waitTime` (可选): 等待页面加载的时间（毫秒，默认 3000ms）
 - `viewport` (可选): 浏览器视口大小（默认 1920x1080）
+- `cookies` (可选): Cookie 数组（用于访问需要登录的页面）
+- `userDataDir` (可选): 浏览器用户数据目录路径（用于保持登录状态）
+- `headless` (可选): 是否使用无头模式（默认 true，设为 false 可看到浏览器窗口）
 
 ## 常用命令
 
@@ -102,15 +105,61 @@ npm run dev
 npm run build
 ```
 
+## 克隆需要登录的网站
+
+工具支持三种方式访问需要登录的网站：
+
+### 方法 1：使用 Cookie（推荐）
+
+```
+请克隆 https://example.com/dashboard，使用 cookies：
+[
+  {
+    "name": "session_id",
+    "value": "your_session_token",
+    "domain": ".example.com"
+  }
+]
+```
+
+### 方法 2：使用浏览器用户数据目录
+
+```
+请克隆 https://example.com/dashboard，使用用户数据目录：
+C:\Users\你的用户名\AppData\Local\Google\Chrome\User Data
+```
+
+**注意**：使用前需要关闭浏览器。
+
+### 方法 3：手动登录（非无头模式）
+
+```
+请克隆 https://example.com/login，使用非无头模式，等待 60000 毫秒
+```
+
+浏览器窗口会打开，你可以手动登录，然后工具会自动克隆页面。
+
+**详细说明**：查看 [docs/登录网站克隆指南.md](docs/登录网站克隆指南.md)
+
 ## 注意事项
 
 - 生成的是静态快照，不包含 JavaScript 交互功能
 - 需要安装 Chromium（Puppeteer 会自动下载）
-- 某些需要登录或有反爬虫机制的网站可能无法克隆
+- 需要登录的网站可以使用 Cookie、用户数据目录或手动登录方式访问
 
 ## 详细文档
 
-查看 `docs/SPA支持说明.md` 了解更多详细信息。
+### 核心文档
+- [SPA支持说明](docs/SPA支持说明.md) - 工具功能和使用说明
+- [快速开始：克隆登录网站](docs/快速开始-登录网站.md) - 5分钟快速上手
+
+### 登录相关
+- [登录网站克隆指南](docs/登录网站克隆指南.md) - 三种登录方式详解
+- [获取Cookie的方法](docs/获取Cookie的方法.md) - Cookie 获取教程
+- [使用示例](docs/使用示例.md) - 各种场景的使用示例
+
+### 其他
+- [更新日志](docs/更新日志.md) - 版本更新记录
 
 ## 资源链接
 

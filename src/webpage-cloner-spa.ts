@@ -75,6 +75,57 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
               },
             },
+            cookies: {
+              type: "array",
+              description: "要设置的 Cookie 数组（用于访问需要登录的页面）",
+              items: {
+                type: "object",
+                properties: {
+                  name: {
+                    type: "string",
+                    description: "Cookie 名称",
+                  },
+                  value: {
+                    type: "string",
+                    description: "Cookie 值",
+                  },
+                  domain: {
+                    type: "string",
+                    description: "Cookie 域名（可选）",
+                  },
+                  path: {
+                    type: "string",
+                    description: "Cookie 路径（可选）",
+                  },
+                  expires: {
+                    type: "number",
+                    description: "过期时间戳（可选）",
+                  },
+                  httpOnly: {
+                    type: "boolean",
+                    description: "是否 HttpOnly（可选）",
+                  },
+                  secure: {
+                    type: "boolean",
+                    description: "是否 Secure（可选）",
+                  },
+                  sameSite: {
+                    type: "string",
+                    description: "SameSite 属性（可选）",
+                  },
+                },
+                required: ["name", "value"],
+              },
+            },
+            userDataDir: {
+              type: "string",
+              description: "浏览器用户数据目录路径（用于保持登录状态，留空则使用临时目录）",
+            },
+            headless: {
+              type: "boolean",
+              description: "是否使用无头模式（false 可以看到浏览器窗口，方便调试登录），默认 true",
+              default: true,
+            },
           },
           required: ["url"],
         },
@@ -122,6 +173,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const downloadImages = (args?.downloadImages as boolean) ?? true;
     const waitTime = (args?.waitTime as number) || 3000;
     const viewport = (args?.viewport as any) || { width: 1920, height: 1080 };
+    const cookies = (args?.cookies as any[]) || [];
+    const userDataDir = (args?.userDataDir as string) || "";
+    const headless = (args?.headless as boolean) ?? true;
 
     if (!url) {
       throw new Error("URL 参数不能为空");
@@ -156,33 +210,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     let statusMessage = `开始克隆 SPA 网页: ${url}\n`;
     statusMessage += `输出目录: ${absoluteOutputDir}\n`;
-    statusMessage += `等待时间: ${waitTime}ms\n\n`;
+    statusMessage += `等待时间: ${waitTime}ms\n`;
+    if (cookies.length > 0) {
+      statusMessage += `使用 Cookie 数量: ${cookies.length}\n`;
+    }
+    if (userDataDir) {
+      statusMessage += `使用用户数据目录: ${userDataDir}\n`;
+    }
+    statusMessage += `无头模式: ${headless ? '是' : '否'}\n\n`;
 
     // 1. 启动浏览器
     statusMessage += "正在启动浏览器...\n";
-    browser = await puppeteer.launch({
-      headless: true,
+    const launchOptions: any = {
+      headless: headless,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    };
+    
+    // 如果指定了用户数据目录，使用它（可以保持登录状态）
+    if (userDataDir) {
+      launchOptions.userDataDir = userDataDir;
+      statusMessage += `使用用户数据目录，将保持登录状态\n`;
+    }
+    
+    browser = await puppeteer.launch(launchOptions);
 
     const page = await browser.newPage();
     await page.setViewport(viewport);
+    
+    // 2. 设置 Cookies（如果提供）
+    if (cookies.length > 0) {
+      statusMessage += "正在设置 Cookies...\n";
+      try {
+        await page.setCookie(...cookies);
+        statusMessage += `已设置 ${cookies.length} 个 Cookie\n`;
+      } catch (error) {
+        statusMessage += `警告: Cookie 设置失败 - ${error}\n`;
+      }
+    }
 
-    // 2. 访问页面并等待 JavaScript 执行
+    // 3. 访问页面并等待 JavaScript 执行
     statusMessage += "正在加载页面并执行 JavaScript...\n";
     await page.goto(url, {
       waitUntil: "networkidle0",
-      timeout: 30000,
+      timeout: 60000,
     });
 
     // 额外等待时间，确保动态内容加载完成
     await new Promise(resolve => setTimeout(resolve, waitTime));
 
-    // 3. 获取渲染后的 HTML
+    // 4. 获取渲染后的 HTML
     statusMessage += "正在提取渲染后的 HTML...\n";
     let html = await page.content();
 
-    // 4. 提取所有 CSS（包括内联和外部）
+    // 5. 提取所有 CSS（包括内联和外部）
     statusMessage += "正在提取和内联 CSS...\n";
     const allStyles = await page.evaluate(() => {
       const styles: string[] = [];
@@ -227,7 +307,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       });
     }
 
-    // 5. 提取所有图片 URL
+    // 6. 提取所有图片 URL
     statusMessage += "正在提取图片链接...\n";
     const imageUrls = await page.evaluate(() => {
       const urls: string[] = [];
@@ -257,7 +337,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     statusMessage += `找到 ${imageUrls.length} 个图片\n`;
 
-    // 6. 处理图片
+    // 7. 处理图片
     const imageMap = new Map<string, string>();
     
     if (downloadImages && imageUrls.length > 0) {
