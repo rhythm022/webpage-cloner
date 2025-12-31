@@ -305,9 +305,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
-    // 7. 移除原有的 CSS 链接和 script 标签
-    html = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi, "");
-    html = html.replace(/<link[^>]+href=["'][^"']+["'][^>]*rel=["']stylesheet["'][^>]*>/gi, "");
+    // 7. 移除原有的 CSS 链接和 script 标签（但保留图标字体库）
+    // 保留常见的图标字体库 CDN 链接
+    const iconLibraries = [
+      'remixicon',
+      'font-awesome',
+      'fontawesome',
+      'material-icons',
+      'bootstrap-icons',
+      'feather',
+      'ionicons',
+      'line-awesome'
+    ];
+    
+    // 提取所有 link 标签
+    const linkRegex = /<link[^>]*>/gi;
+    const links = html.match(linkRegex) || [];
+    
+    // 移除非图标库的 stylesheet 链接
+    links.forEach((link: string) => {
+      const isIconLibrary = iconLibraries.some((lib: string) => 
+        link.toLowerCase().includes(lib)
+      );
+      
+      // 只移除非图标库的 stylesheet
+      if (!isIconLibrary && /rel=["']stylesheet["']/i.test(link)) {
+        html = html.replace(link, '');
+      }
+    });
+    
     html = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ""); // 移除旧的 style 标签
 
     // 可选：移除 script 标签（因为已经渲染完成）
