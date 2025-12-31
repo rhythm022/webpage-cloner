@@ -209,7 +209,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return styles;
     });
 
-    const combinedCss = allStyles.join("\n\n");
+    let combinedCss = allStyles.join("\n\n");
+    
+    // 当不下载图片时，转换 CSS 中的相对 URL 为绝对 URL
+    if (!downloadImages) {
+      combinedCss = combinedCss.replace(/url\(['"]?([^'")\s]+)['"]?\)/gi, (match: string, urlPath: string) => {
+        // 跳过已经是绝对路径或 data URI 的
+        if (urlPath.startsWith('http://') || urlPath.startsWith('https://') || urlPath.startsWith('data:') || urlPath.startsWith('//')) {
+          return match;
+        }
+        try {
+          const absoluteUrl = new URL(urlPath, url).href;
+          return `url('${absoluteUrl}')`;
+        } catch {
+          return match;
+        }
+      });
+    }
 
     // 5. 提取所有图片 URL
     statusMessage += "正在提取图片链接...\n";
@@ -241,9 +257,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     statusMessage += `找到 ${imageUrls.length} 个图片\n`;
 
-    // 6. 下载图片（如果需要）
+    // 6. 处理图片
     const imageMap = new Map<string, string>();
+    
     if (downloadImages && imageUrls.length > 0) {
+      // 下载图片到本地
+      statusMessage += "正在下载图片到本地...\n";
       for (let i = 0; i < imageUrls.length; i++) {
         const imageUrl = imageUrls[i];
         try {
@@ -287,7 +306,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       // 替换 HTML 和 CSS 中的图片链接
-      statusMessage += "\n正在替换图片链接...\n";
+      statusMessage += "\n正在替换图片链接为本地路径...\n";
       for (const [originalUrl, localPath] of imageMap.entries()) {
         // 转义特殊字符用于正则表达式
         const escapedUrl = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -303,9 +322,149 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         
         statusMessage += `  替换: ${originalUrl} -> ${localPath}\n`;
       }
+    } else if (!downloadImages && imageUrls.length > 0) {
+      // 不下载图片，但需要确保所有图片 URL 都是绝对路径
+      statusMessage += "正在将图片链接转换为绝对 URL...\n";
+      
+      // 在浏览器上下文中获取所有图片的绝对 URL 映射
+      const absoluteUrlMap = await page.evaluate(() => {
+        const map: { [key: string]: string } = {};
+        
+        // 处理 img 标签
+        document.querySelectorAll("img").forEach((img) => {
+          const originalSrc = img.getAttribute("src");
+          const absoluteSrc = img.src;
+          if (originalSrc && absoluteSrc && !absoluteSrc.startsWith("data:")) {
+            map[originalSrc] = absoluteSrc;
+          }
+        });
+        
+        // 处理 CSS 背景图片（这些已经是绝对路径了，但为了保险起见）
+        document.querySelectorAll("*").forEach((el) => {
+          const style = window.getComputedStyle(el);
+          const bgImage = style.backgroundImage;
+          if (bgImage && bgImage !== "none") {
+            const match = bgImage.match(/url\(['"]?([^'")\s]+)['"]?\)/);
+            if (match && match[1] && !match[1].startsWith("data:")) {
+              // 背景图片的 URL 可能需要处理
+              map[match[1]] = match[1]; // 已经是绝对路径
+            }
+          }
+        });
+        
+        return map;
+      });
+      
+      // 替换 HTML 中的相对路径为绝对 URL
+      for (const [originalPath, absoluteUrl] of Object.entries(absoluteUrlMap)) {
+        if (originalPath !== absoluteUrl) {
+          // 转义特殊字符用于正则表达式
+          const escapedPath = originalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          // 同时创建 HTML 实体编码版本（& -> &amp;）
+          const escapedPathWithEntities = escapedPath.replace(/&/g, "&amp;");
+          
+          // 替换 HTML 中的 src 属性（处理两种情况：原始和实体编码）
+          html = html.replace(
+            new RegExp(`src=["']${escapedPath}["']`, "g"),
+            `src="${absoluteUrl}"`
+          );
+          html = html.replace(
+            new RegExp(`src=["']${escapedPathWithEntities}["']`, "g"),
+            `src="${absoluteUrl}"`
+          );
+          
+          // 替换 CSS 中的 url() 引用
+          html = html.replace(
+            new RegExp(`url\\(['"]?${escapedPath}['"]?\\)`, "g"),
+            `url('${absoluteUrl}')`
+          );
+          html = html.replace(
+            new RegExp(`url\\(['"]?${escapedPathWithEntities}['"]?\\)`, "g"),
+            `url('${absoluteUrl}')`
+          );
+          
+          statusMessage += `  转换: ${originalPath} -> ${absoluteUrl}\n`;
+        }
+      }
+      
+      statusMessage += `已将 ${Object.keys(absoluteUrlMap).length} 个图片链接转换为绝对 URL\n`;
+    }
+    
+    // 8. 当不下载图片时，也需要转换其他资源的相对路径为绝对 URL
+    if (!downloadImages) {
+      statusMessage += "正在将其他资源链接转换为绝对 URL...\n";
+      
+      // 获取页面的基础 URL
+      const baseUrl = new URL(url);
+      const origin = baseUrl.origin;
+      
+      // 辅助函数：将相对 URL 转换为绝对 URL
+      const toAbsoluteUrl = (relativeUrl: string): string => {
+        if (!relativeUrl || relativeUrl.startsWith('http://') || relativeUrl.startsWith('https://') || relativeUrl.startsWith('data:') || relativeUrl.startsWith('//')) {
+          return relativeUrl;
+        }
+        try {
+          return new URL(relativeUrl, url).href;
+        } catch {
+          return relativeUrl;
+        }
+      };
+      
+      // 转换 img 标签的 src（处理可能遗漏的图片）
+      html = html.replace(/<img([^>]*?)src=["']([^"']+)["']/gi, (match: string, attrs: string, src: string) => {
+        const absoluteSrc = toAbsoluteUrl(src);
+        if (absoluteSrc !== src) {
+          statusMessage += `  转换 img: ${src} -> ${absoluteSrc}\n`;
+        }
+        return `<img${attrs}src="${absoluteSrc}"`;
+      });
+      
+      // 转换 link 标签的 href（包括 favicon、stylesheet 等）
+      html = html.replace(/<link([^>]*?)href=["']([^"']+)["']/gi, (match: string, attrs: string, href: string) => {
+        const absoluteHref = toAbsoluteUrl(href);
+        if (absoluteHref !== href) {
+          statusMessage += `  转换 link: ${href} -> ${absoluteHref}\n`;
+        }
+        return `<link${attrs}href="${absoluteHref}"`;
+      });
+      
+      // 转换 script 标签的 src
+      html = html.replace(/<script([^>]*?)src=["']([^"']+)["']/gi, (match: string, attrs: string, src: string) => {
+        const absoluteSrc = toAbsoluteUrl(src);
+        if (absoluteSrc !== src) {
+          statusMessage += `  转换 script: ${src} -> ${absoluteSrc}\n`;
+        }
+        return `<script${attrs}src="${absoluteSrc}"`;
+      });
+      
+      // 转换 a 标签的 href（只转换相对路径，保留锚点和 javascript:）
+      html = html.replace(/<a([^>]*?)href=["']([^"']+)["']/gi, (match: string, attrs: string, href: string) => {
+        if (href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) {
+          return match;
+        }
+        const absoluteHref = toAbsoluteUrl(href);
+        if (absoluteHref !== href) {
+          statusMessage += `  转换 a: ${href} -> ${absoluteHref}\n`;
+        }
+        return `<a${attrs}href="${absoluteHref}"`;
+      });
+      
+      // 转换 CSS 中的 url() - 处理所有未被处理的相对路径
+      html = html.replace(/url\(['"]?([^'")\s]+)['"]?\)/gi, (match: string, urlPath: string) => {
+        if (urlPath.startsWith('http://') || urlPath.startsWith('https://') || urlPath.startsWith('data:') || urlPath.startsWith('//')) {
+          return match;
+        }
+        const absoluteUrl = toAbsoluteUrl(urlPath);
+        if (absoluteUrl !== urlPath) {
+          statusMessage += `  转换 CSS url: ${urlPath} -> ${absoluteUrl}\n`;
+        }
+        return `url('${absoluteUrl}')`;
+      });
+      
+      statusMessage += "已完成所有资源链接的转换\n";
     }
 
-    // 7. 移除原有的 CSS 链接和 script 标签（但保留图标字体库）
+    // 9. 移除原有的 CSS 链接和 script 标签（但保留图标字体库）
     // 保留常见的图标字体库 CDN 链接
     const iconLibraries = [
       'remixicon',
@@ -339,7 +498,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // 可选：移除 script 标签（因为已经渲染完成）
     // html = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
 
-    // 8. 将合并的 CSS 内联到 HTML
+    // 10. 将合并的 CSS 内联到 HTML
     const styleTag = `<style>\n${combinedCss}\n</style>`;
     if (html.includes("</head>")) {
       html = html.replace("</head>", `${styleTag}\n</head>`);
@@ -349,7 +508,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       html = styleTag + html;
     }
 
-    // 9. 保存 HTML 文件
+    // 11. 保存 HTML 文件
     const htmlPath = path.join(absoluteOutputDir, "index.html");
     await fs.writeFile(htmlPath, html, "utf-8");
 
