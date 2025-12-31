@@ -1,7 +1,7 @@
 {
   "name": "webpage-cloner-spa",
-  "version": "2.0.0",
-  "description": "SPA 网页克隆工具 - 基于 MCP 的浏览器自动化工具，支持 React/Vue/Angular 等 SPA 框架",
+  "version": "2.2.0",
+  "description": "SPA 网页克隆工具 - 基于 MCP 的浏览器自动化工具，支持 React/Vue/Angular 等 SPA 框架，支持多标签页操作",
   "type": "module",
   "main": "build/webpage-cloner-spa.js",
   "scripts": {

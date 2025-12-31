@@ -264,32 +264,167 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // 5. 提取所有 CSS（包括内联和外部）
     statusMessage += "正在提取和内联 CSS...\n";
-    const allStyles = await page.evaluate(() => {
+    
+    // 首先获取所有外部 CSS 链接，区分同域名和跨域
+    const { styles: allStyles, sameDomainSheets, crossDomainSheets } = await page.evaluate((pageUrl: string) => {
       const styles: string[] = [];
+      const sameDomain: string[] = [];
+      const crossDomain: string[] = [];
+      const pageOrigin = new URL(pageUrl).origin;
+      const processedHrefs = new Set<string>();
 
       // 获取所有 style 标签
       document.querySelectorAll("style").forEach((style) => {
         styles.push(style.textContent || "");
       });
 
-      // 获取所有外部样式表
+      // 获取所有外部样式表链接
+      document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+        const href = (link as HTMLLinkElement).href;
+        if (href && !processedHrefs.has(href)) {
+          processedHrefs.add(href);
+          try {
+            const sheetUrl = new URL(href);
+            if (sheetUrl.origin === pageOrigin) {
+              sameDomain.push(href);
+            } else {
+              crossDomain.push(href);
+            }
+          } catch (urlError) {
+            // 忽略无效的 URL
+          }
+        }
+      });
+
+      // 尝试通过 CSSOM 提取跨域样式表（它们通常已经通过 CORS 加载）
       Array.from(document.styleSheets).forEach((sheet) => {
+        if (!sheet.href) return; // 跳过内联样式
+        
         try {
-          if (sheet.cssRules) {
+          const sheetUrl = new URL(sheet.href);
+          // 只处理跨域的样式表
+          if (sheetUrl.origin !== pageOrigin && sheet.cssRules) {
             const rules = Array.from(sheet.cssRules)
               .map((rule) => rule.cssText)
               .join("\n");
             styles.push(rules);
           }
         } catch (e) {
-          // 跨域样式表可能无法访问
+          // 无法访问的跨域样式表，忽略
         }
       });
 
-      return styles;
-    });
+      return { styles, sameDomainSheets: sameDomain, crossDomainSheets: crossDomain };
+    }, url);
+    
+    statusMessage += `找到 ${sameDomainSheets.length} 个同域名 CSS 文件，${crossDomainSheets.length} 个跨域 CSS 文件\n`;
+    
+    // 下载所有同域名的 CSS 文件（因为需要处理其中的相对路径）
+    const downloadedCssContents: string[] = [];
+    if (sameDomainSheets.length > 0) {
+      statusMessage += `正在下载同域名 CSS 文件...\n`;
+      
+      for (const cssUrl of sameDomainSheets) {
+        try {
+          statusMessage += `  下载 CSS: ${cssUrl}\n`;
+          
+          // 使用 page.evaluate 和 fetch 在页面上下文中下载 CSS
+          const cssText = await page.evaluate(async (url: string) => {
+            try {
+              const response = await fetch(url);
+              if (!response.ok) return null;
+              return await response.text();
+            } catch (e) {
+              return null;
+            }
+          }, cssUrl);
+          
+          if (cssText) {
+            let processedCss = cssText;
+            
+            // 处理 CSS 中的字体文件引用
+            if (downloadImages) {
+              // 提取所有字体文件 URL
+              const fontUrlMatches = cssText.matchAll(/url\(['"]?([^'")\s]+\.(woff2?|ttf|eot|otf|svg))(\?[^'")\s]*)?\s*['"]?\)/gi);
+              const fontUrls = new Set<string>();
+              
+              for (const match of fontUrlMatches) {
+                const fontPath = match[1];
+                try {
+                  const absoluteFontUrl = new URL(fontPath, cssUrl).href;
+                  fontUrls.add(absoluteFontUrl);
+                } catch (e) {
+                  // 忽略无效的 URL
+                }
+              }
+              
+              // 下载字体文件
+              if (fontUrls.size > 0) {
+                statusMessage += `    找到 ${fontUrls.size} 个字体文件\n`;
+                
+                for (const fontUrl of fontUrls) {
+                  try {
+                    statusMessage += `      下载字体: ${fontUrl}\n`;
+                    const relativePath = getOriginalFilePath(fontUrl, 0);
+                    const fontPath = path.join(absoluteOutputDir, relativePath);
+                    
+                    // 确保目标目录存在
+                    const fontDir = path.dirname(fontPath);
+                    await fs.mkdir(fontDir, { recursive: true });
+                    
+                    // 下载字体文件
+                    const fontData = await page.evaluate(async (url: string) => {
+                      try {
+                        const response = await fetch(url);
+                        if (!response.ok) return null;
+                        const blob = await response.blob();
+                        const arrayBuffer = await blob.arrayBuffer();
+                        return Array.from(new Uint8Array(arrayBuffer));
+                      } catch (e) {
+                        return null;
+                      }
+                    }, fontUrl);
+                    
+                    if (fontData) {
+                      const buffer = Buffer.from(fontData);
+                      await fs.writeFile(fontPath, buffer);
+                      
+                      // 替换 CSS 中的字体 URL 为本地路径
+                      const escapedUrl = fontUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                      processedCss = processedCss.replace(
+                        new RegExp(escapedUrl, "g"),
+                        `./${relativePath}`
+                      );
+                    }
+                  } catch (error) {
+                    statusMessage += `        警告: 字体下载失败 ${fontUrl}\n`;
+                  }
+                }
+              }
+            } else {
+              // 不下载字体，转换为绝对 URL
+              processedCss = processedCss.replace(/url\(['"]?([^'")\s]+)['"]?\)/gi, (match: string, urlPath: string) => {
+                if (urlPath.startsWith('http://') || urlPath.startsWith('https://') || urlPath.startsWith('data:') || urlPath.startsWith('//')) {
+                  return match;
+                }
+                try {
+                  const absoluteUrl = new URL(urlPath, cssUrl).href;
+                  return `url('${absoluteUrl}')`;
+                } catch {
+                  return match;
+                }
+              });
+            }
+            
+            downloadedCssContents.push(processedCss);
+          }
+        } catch (error) {
+          statusMessage += `    警告: CSS 下载失败 ${cssUrl}: ${error}\n`;
+        }
+      }
+    }
 
-    let combinedCss = allStyles.join("\n\n");
+    let combinedCss = [...downloadedCssContents, ...allStyles].join("\n\n");
     
     // 当不下载图片时，转换 CSS 中的相对 URL 为绝对 URL
     if (!downloadImages) {
